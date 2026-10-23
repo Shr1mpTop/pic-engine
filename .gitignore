@@ -1,6 +1,5 @@
 config*.json
 !config.example.json
-distribute_state.json
 __pycache__/
 *.pyc
 output/

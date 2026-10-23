@@ -38,16 +38,10 @@ DEFAULTS = {
     },
     "cache": {"device": "auto", "dtype": "default"},   # QwenImage21Cache 参数
     "quality": DEFAULT_QUALITY,
+    "low_ram": False,                # true = 顺序驻留（12GB 级机器专用，单阶段只驻留一个模型）
+    "comfy_args": {},                # comfy 启动参数透传，例 {"use_split_cross_attention": true}
     "prompts": {"step1_template": "", "negative": ""},  # 由 extract 工具回填，勿手抄
     "default_analysis_file": os.path.join(ROOT, "defaults", "analysis_fallback.json"),
-    # 子任务分发（默认自动）：workers 里的远端引擎，谁在线谁参与（/health 探活），
-    # 不在线自动全归本机——没有开关。权重 = 按实测速度自适应（scheduler 里 EMA），
-    # worker 写 "weight" 可静态覆盖。叶子任务（skip_step1）绝不二次分发（防环）。
-    "distribute": {
-        "workers": [],               # 例: [{"url": "http://Mac:8195"}]（weight 可选）
-        "timeout_s_per_image": 600,  # 远端子任务预算 = 120 + 条数×该值
-        "min_styles": 2,             # 造型数低于该值不分发（省一次网络往返）
-    },
 }
 
 

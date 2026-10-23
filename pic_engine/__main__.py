@@ -19,7 +19,8 @@ def cmd_check(args):
     cfg = config.load(args.config)
     print("engine %s" % __version__)
     print("fork: %s" % cfg["comfyui_root"])
-    fork = bootstrap.bootstrap(cfg["comfyui_root"], cfg["input_dir"], cfg["output_dir"])
+    fork = bootstrap.bootstrap(cfg["comfyui_root"], cfg["input_dir"], cfg["output_dir"],
+                               cfg.get("comfy_args"))
     print("节点导入: OK（nodes.py + nodes_qwen.py）")
     ok = True
     for kind, name in (("diffusion_models", cfg["models"]["unet"]),
@@ -55,7 +56,8 @@ def cmd_render(args):
     from . import bootstrap, config
     from .pipeline import Renderer
     cfg = config.load(args.config)
-    fork = bootstrap.bootstrap(cfg["comfyui_root"], cfg["input_dir"], cfg["output_dir"])
+    fork = bootstrap.bootstrap(cfg["comfyui_root"], cfg["input_dir"], cfg["output_dir"],
+                               cfg.get("comfy_args"))
     styles = list(args.style)
     if args.style_file:
         with open(args.style_file, "r", encoding="utf-8") as f:

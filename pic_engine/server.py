@@ -40,8 +40,6 @@ def _resolve_params(cfg, data):
         "seed2": data.get("seed2"),
         "width": w, "height": h, "steps": steps,
         "quality": quality,
-        # 叶子任务：photo 即协调者发来的基础图，跳过 Step1 直跑造型段
-        "skip_step1": bool(data.get("skip_step1")),
     }
 
 
@@ -126,7 +124,8 @@ def make_app(cfg, runner, device):
 
 
 def run(cfg):
-    fork = bootstrap.bootstrap(cfg["comfyui_root"], cfg["input_dir"], cfg["output_dir"])
+    fork = bootstrap.bootstrap(cfg["comfyui_root"], cfg["input_dir"], cfg["output_dir"],
+                               cfg.get("comfy_args"))
     import comfy.model_management as mm
     try:
         device = str(mm.get_torch_device())

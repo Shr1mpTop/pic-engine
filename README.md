@@ -93,31 +93,6 @@ PY=~/ComfyUI/venv/bin/python ./scripts/start_mac.sh   # 用跑 ComfyUI 的那个
   无需任何平台条件配置；
 - 前提：同一 ComfyUI fork、同三件套模型（两机已做 SHA256 级核对一致）。
 
-## 多机分发（子任务调度器）
-
-收到任务的本机 = **协调者**：先本机出 Step1 基础图，再把 styles 按权重切给远端
-worker 并发渲染（本机份额同时跑），收集后按风格原始顺序统一编号落盘。
-gateway 看到的仍是一单 N+1 张——**分发完全藏在引擎内部，网关/前端零改动**。
-
-```json
-// config.json（协调者机器）—— 没有开关：workers 在线就参与，全不在线=自动本机
-"distribute": {
-  "workers": [{"url": "http://<Mac-IP>:8195"}]
-}
-```
-
-- **权重不要手调**：按实测速度（秒/张）自适应，EMA 记录在 `distribute_state.json`，
-  快的机器自动分到更多风格；worker 里写 `"weight": N` 可静态覆盖（人工钉死时才用）；
-- 远端跑**同一份引擎代码**，以叶子任务形态接活（`skip_step1`，绝不二次分发——防环）；
-  Step1 PNG 经 multipart 直传，成品由协调者收集重编号；
-- worker 掉线/子任务失败 → 该段自动回本机补渲染（已测）；worker 全挂 = 退化单机（已测）；
-- 取消透传、子任务超时预算（`timeout_s_per_image`）；
-- 测试：`tests/mock_worker.py`（假 worker，`MOCK_FAIL=1` 测兜底）+
-  `tests/test_distribute_e2e.py`（断言收集顺序 = 风格顺序；两轮实测：无历史均分
-  remote2+local2，EMA 学完后按速度倾斜 remote3+local1）；
-- ⚠️ 实测教训：解码张量**绝不跨长 I/O 持有**（aimdo 内存管理下延迟落盘会损坏，
-  见 `render_styles` 注释）——本机份额先落盘到暂存前缀，收集阶段 `os.replace` 改名。
-
 ## 更新（客户端无感）
 
 - 引擎更新 = `git pull` + 重启进程（**面板 engine 卡开/关**，或 `run.py serve`）。

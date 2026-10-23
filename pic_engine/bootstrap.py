@@ -86,7 +86,7 @@ def _enable_dynamic_vram():
                         "support disabled（同 main.py 行为，退回经典 ModelPatcher）")
 
 
-def bootstrap(comfyui_root, input_dir, output_dir):
+def bootstrap(comfyui_root, input_dir, output_dir, comfy_args=None):
     # fork 的 comfy.* 全靠 logging 输出（Requested to load / loaded completely /
     # 量化 kernel 选择）。不配置就是瞎跑：模型加载进度、降级警告一概不可见。
     logging.basicConfig(level=logging.INFO,
@@ -98,6 +98,12 @@ def bootstrap(comfyui_root, input_dir, output_dir):
     # 1) torch 首次加载前：分配器选 cudaMallocAsync
     import cuda_malloc  # noqa: F401  （副作用模块）
     from comfy.cli_args import args
+
+    # comfy 启动参数透传（config.comfy_args）：必须在 import nodes/model_management
+    # 之前打上（vram 状态/注意力实现都在导入期读取）。例：Mac 上
+    # {"use_split_cross_attention": true} 替换默认的 sub-quadratic 注意力。
+    for key, value in (comfy_args or {}).items():
+        setattr(args, key, value)
 
     import folder_paths
     folder_paths.set_input_directory(os.path.abspath(input_dir))

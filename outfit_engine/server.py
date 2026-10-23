@@ -64,8 +64,8 @@ def make_app(cfg, runner, device):
                     ext = os.path.splitext(part.filename or "")[1].lower() or ".jpg"
                 elif part.name == "job":
                     try:
-                        data = json.loads(await part.text())
-                    except ValueError:
+                        data = json.loads((await part.read()).decode("utf-8-sig"))
+                    except (ValueError, UnicodeDecodeError):
                         return web.json_response({"error": "job 字段不是合法 JSON"}, status=400)
             if raw:
                 if len(raw) > 32 * 1024 * 1024:
@@ -77,9 +77,11 @@ def make_app(cfg, runner, device):
                     f.write(raw)
                 data["photo"] = name
         else:
+            # utf-8-sig：容忍带 BOM 的 JSON（Windows 工具链常态，实测 PS5.1 直踩）
+            raw = await request.read()
             try:
-                data = await request.json()
-            except ValueError:
+                data = json.loads(raw.decode("utf-8-sig"))
+            except (ValueError, UnicodeDecodeError):
                 return web.json_response({"error": "请求体不是合法 JSON"}, status=400)
         try:
             params = _resolve_params(cfg, data)

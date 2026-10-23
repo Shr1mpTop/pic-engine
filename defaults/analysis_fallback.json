@@ -1,0 +1,11 @@
+{
+  "_meta": {
+    "source": "outfit-gateway/gateway.py ANA_FALLBACK（镜像；生产路径由 gateway 注入真实分析，这里只服务引擎独立跑测）",
+    "note": "改 gateway 的兜底值时同步改这份，保持对齐"
+  },
+  "body_type": "匀称", "physique": "健康", "shoulders": "标准肩",
+  "waist": "腰线分明", "hips": "臀线紧致", "legs": "双腿修长",
+  "chest": "饱满", "skin_tone": "白皙",
+  "axillary_hair": "光滑无痕迹", "limb_hair": "无明显毛茬",
+  "genital_region": "阴阜区毛发密度中等，分布均匀；外阴区域大小适中，大阴唇饱满且紧致，色素自然"
+}

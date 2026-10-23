@@ -1,0 +1,3 @@
+# 零第三方依赖：所有运行时（torch / aiohttp / PIL / numpy）来自
+# config.json 里 comfyui_root 指向的 ComfyUI fork Python 环境，
+# 引擎必须用该环境的解释器启动（见 scripts/start_windows.bat / start_mac.sh）。

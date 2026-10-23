@@ -59,18 +59,28 @@ def _record_speed(label, n_images, elapsed):
 
 def _weights_for(cfg, workers):
     """本机 + 各远端的切分权重：worker 配置写了 weight 用静态值（人工覆盖），
-    否则按实测速度自适应（EMA 秒/张，快→权重大）；没测过 = 1。本机永远参与。"""
+    否则按实测速度自适应（EMA 秒/张，快→权重大）；**没测过的按"同本机速度"假设**
+    （不能按 1 算——本机 EMA 权重通常 ≪1，未测 worker 会被分走几乎全部）。"""
     speeds = _load_speeds()
-    out = []
-    for label in ["local"] + [w["url"] for w in workers]:
+
+    def weight_of(label):
         static = next((w.get("weight") for w in workers if w["url"] == label), None)
         if static:
-            out.append(float(static))
-        elif label in speeds and float(speeds[label]) > 0:
-            out.append(1.0 / max(float(speeds[label]), 0.1))
-        else:
-            out.append(1.0)
+            return float(static)
+        if label in speeds and float(speeds[label]) > 0:
+            return 1.0 / max(float(speeds[label]), 0.1)
+        return None
+    local_w = weight_of("local") or 1.0
+    out = [local_w]
+    for w in workers:
+        out.append(weight_of(w["url"]) or local_w)
     return out
+
+
+def _measured_labels(workers):
+    """有实测记录（或人工钉了 weight）的 worker——只有它们能吃多条探针。"""
+    speeds = _load_speeds()
+    return [w["url"] for w in workers if w["url"] in speeds or w.get("weight")]
 
 
 # ---------------- 远端 HTTP（worker 线程内同步调用） ----------------
@@ -209,6 +219,12 @@ def coordinate(renderer, params, progress, should_cancel):
         return renderer.render(params, progress, should_cancel)
 
     counts = _split(len(styles), _weights_for(cfg, workers))        # [本机, 远端...]
+    # 未测过的 worker 首单只探 1 条（其余归本机尾部），测完下一单起按 EMA 全量分
+    measured = _measured_labels(workers)
+    for idx, w in enumerate(workers, start=1):
+        if w["url"] not in measured and counts[idx] > 1:
+            counts[0] += counts[idx] - 1
+            counts[idx] = 1
     ranges, pos = [], 0
     for n in counts[1:]:                 # 远端先拿前面的风格段
         ranges.append((pos, pos + n))

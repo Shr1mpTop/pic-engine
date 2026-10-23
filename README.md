@@ -84,6 +84,10 @@ PY=~/ComfyUI/venv/bin/python ./scripts/start_mac.sh   # 用跑 ComfyUI 的那个
   sha256 + 时间戳溯源）。PC 端 workflow 改版后跑 extract 工具重新生成并提交，
   Mac `git pull` 即同步——**Mac 不需要 outfit_studio / workflow.json**；
 - **Mac 不需要安装任何 custom node**：业务逻辑（分析注入、模板替换）已编译进引擎；
+- ⚠️ **内存门槛**：整套权重 int8 常驻 ≈16.4GB（TE 8.9 + DiT 6.9 + VAE 0.6），且
+  convrot 在 Apple MPS 无原生核（逐层反量化=CPU 模拟）。**实测 12GB 统一内存的
+  MacBook Air M2 会整机换页（swap 吃满、采样停滞、损耗 SSD）→ 不能当 worker**；
+  可用门槛 ≥32GB 内存，或改用更小的模型组合；
 - bootstrap 在 Mac 上自动退回经典 ModelPatcher（comfy-aimdo 仅 Win/Linux，
   `init()` 因不支持的操作系统返回 False，`_enable_dynamic_vram` 据此跳过），
   无需任何平台条件配置；

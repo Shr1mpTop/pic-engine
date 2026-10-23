@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """命令行入口：
-    python -m outfit_engine check  --config config.json     # 冒烟：配置/fork/模型文件/目录，不加载模型
-    python -m outfit_engine serve  --config config.json     # 常驻服务
-    python -m outfit_engine render --config config.json --photo x.jpg [--style ...] [--quality fast]
+    python -m pic_engine check  --config config.json     # 冒烟：配置/fork/模型文件/目录，不加载模型
+    python -m pic_engine serve  --config config.json     # 常驻服务
+    python -m pic_engine render --config config.json --photo x.jpg [--style ...] [--quality fast]
                                      [--seed1 N --seed2 N --analysis-file a.json]   # 本机同步出图（调试）
 必须用 ComfyUI fork 的 Python 环境启动（torch/aiohttp 都在那边）。
 """
@@ -75,7 +75,7 @@ def cmd_render(args):
 
 
 def main():
-    ap = argparse.ArgumentParser(prog="outfit_engine")
+    ap = argparse.ArgumentParser(prog="pic_engine")
     ap.add_argument("--version", action="version", version=__version__)
     sub = ap.add_subparsers(dest="cmd", required=True)
 

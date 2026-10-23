@@ -1,11 +1,11 @@
-# Outfit Engine
+# Pic Engine
 
 穿搭工坊的**无服务器出图引擎**：把 ComfyUI fork 当库用（不起 server、无队列、无 JSON 图），
 把生产工作流固化为一条六段式模板管线，对上层暴露一个极简 HTTP 契约。
 渲染结果与 ComfyUI 跑同一工作流**逐位一致**——因为节点实现就是 fork 里的真类，直接调用。
 
 ```
-手机面板 ──> outfit-gateway(8188) ──> outfit-engine(8195) ──> ComfyUI fork（import，无进程）
+手机面板 ──> outfit-gateway(8188) ──> pic-engine(8195) ──> ComfyUI fork（import，无进程）
                 任务/账号/图库              六段式模板管线          models/ + comfy.* + nodes.py
                 (outfit.db)               (photo+params→图)      （kernel/显存调度全复用）
 ```
@@ -19,7 +19,7 @@
 ## 快速开始（Windows / 笔记本 apex）
 
 ```bat
-cd E:\github\outfit-engine
+cd E:\github\pic-engine
 set PY=E:\github\ComfyUI\python_embeded\python.exe
 
 :: 1) 从生产 workflow.json 对齐配置（生成 config.json，机器本地文件，不入库）
@@ -39,7 +39,7 @@ set PY=E:\github\ComfyUI\python_embeded\python.exe
 ```
 
 > Windows 嵌入式解释器必须走 `run.py`（`._pth` 隔离模式不含 cwd）；
-> Mac/标准 venv 用 `python -m outfit_engine ...` 等价。
+> Mac/标准 venv 用 `python -m pic_engine ...` 等价。
 
 ## HTTP 契约
 
@@ -69,7 +69,7 @@ set PY=E:\github\ComfyUI\python_embeded\python.exe
 ## Mac 部署
 
 ```bash
-git clone <本仓库> ~/outfit-engine && cd ~/outfit-engine
+git clone <本仓库> ~/pic-engine && cd ~/pic-engine
 python3 scripts/extract_from_workflow.py \
     --workflow ~/ComfyUI/ComfyUI/custom_nodes/outfit_studio/web/workflow.json \
     --config config.json --comfyui-root ~/ComfyUI/ComfyUI

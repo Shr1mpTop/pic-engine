@@ -3,4 +3,4 @@
 #   PY=~/ComfyUI/venv/bin/python ./scripts/start_mac.sh
 cd "$(dirname "$0")/.."
 PY="${PY:-python3}"
-exec "$PY" -m outfit_engine serve --config config.json
+exec "$PY" -m pic_engine serve --config config.json

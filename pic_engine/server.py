@@ -124,7 +124,7 @@ def run(cfg):
         device = "unknown"
     from .runner import Runner
     runner = Runner(cfg, fork)
-    print("[outfit-engine %s] %s:%s  device=%s  fork=%s" % (
+    print("[pic-engine %s] %s:%s  device=%s  fork=%s" % (
         __version__, cfg["host"], cfg["port"], device, cfg["comfyui_root"]), flush=True)
     web.run_app(make_app(cfg, runner, device), host=cfg["host"],
                 port=int(cfg["port"]), print=None, access_log=None)

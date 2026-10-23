@@ -46,4 +46,4 @@ gateway 的 jobs 表在派发前已具备全部信息，无需改 enqueue：
 2. 停 gateway -> 放入 engine_bridge.py + 打补丁 -> 起 gateway（ENGINE_URL 空，行为不变）
 3. 开引擎（8195）跑冒烟 -> `ENGINE_URL=http://127.0.0.1:8195` 重启 gateway
 4. 面板下一单真实任务验证全链路 -> 观察一轮 -> 面板卡语义改名
-5. 运维手册 §新条目：outfit-engine 服务、更新流程、回滚开关
+5. 运维手册 §新条目：pic-engine 服务、更新流程、回滚开关

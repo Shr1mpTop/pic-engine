@@ -21,7 +21,6 @@
     "resolution": 1080
   },
   "distribute": {
-    "enabled": false,
     "workers": [],
     "timeout_s_per_image": 600,
     "min_styles": 2

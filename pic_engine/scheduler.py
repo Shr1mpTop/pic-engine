@@ -25,26 +25,72 @@ from .pipeline import RenderCancelled
 _BOUNDARY = "picengine%s" % uuid.uuid4().hex[:16]
 
 
+# ---------------- 实测速度（EMA 自适应权重，本地持久化） ----------------
+
+_STATE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "distribute_state.json")
+_speeds = {}         # {label: 秒/张}；label = "local" 或 worker url（懒加载自状态文件）
+
+
+def _load_speeds():
+    global _speeds
+    if not _speeds:
+        try:
+            with open(_STATE_FILE, "r", encoding="utf-8") as f:
+                _speeds = json.load(f)
+        except Exception:  # noqa: BLE001 - 没有历史=大家都从权重 1 起步
+            _speeds = {}
+    return _speeds
+
+
+def _record_speed(label, n_images, elapsed):
+    if n_images <= 0 or elapsed <= 0:
+        return
+    sp = round(elapsed / n_images, 2)
+    speeds = _load_speeds()
+    old = speeds.get(label)
+    speeds[label] = sp if old is None else round(0.6 * old + 0.4 * sp, 2)
+    try:
+        with open(_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(speeds, f)
+    except OSError:
+        pass
+
+
+def _weights_for(cfg, workers):
+    """本机 + 各远端的切分权重：worker 配置写了 weight 用静态值（人工覆盖），
+    否则按实测速度自适应（EMA 秒/张，快→权重大）；没测过 = 1。本机永远参与。"""
+    speeds = _load_speeds()
+    out = []
+    for label in ["local"] + [w["url"] for w in workers]:
+        static = next((w.get("weight") for w in workers if w["url"] == label), None)
+        if static:
+            out.append(float(static))
+        elif label in speeds and float(speeds[label]) > 0:
+            out.append(1.0 / max(float(speeds[label]), 0.1))
+        else:
+            out.append(1.0)
+    return out
+
+
 # ---------------- 远端 HTTP（worker 线程内同步调用） ----------------
 
 def _url(worker, path):
     return worker["url"].rstrip("/") + path
 
 
-def _worker_enabled(cfg):
-    """启用条件：配置开启 + 有远端 + 不是叶子任务。返回 (enabled, workers)。"""
+def workers_of(cfg):
+    """配置里的远端引擎列表（剔除本机自环）。空 = 永远本机单机。"""
     dist = cfg.get("distribute") or {}
-    if not dist.get("enabled"):
-        return False, []
     workers = [w for w in (dist.get("workers") or []) if w.get("url")]
     own = "%s:%s" % (cfg.get("host"), cfg.get("port"))
-    workers = [w for w in workers if own not in w["url"]]     # 防自环
-    return bool(workers), workers
+    return [w for w in workers if own not in w["url"]]
 
 
 def should_distribute(cfg, params):
-    enabled, workers = _worker_enabled(cfg)
-    if not enabled or params.get("skip_step1"):
+    """没有开关：workers 里谁在线（/health）谁参与，全不在线=自动本机。"""
+    workers = workers_of(cfg)
+    if not workers or params.get("skip_step1"):
         return False
     styles = params.get("styles") or []
     min_styles = int((cfg.get("distribute") or {}).get("min_styles", 2))
@@ -56,8 +102,8 @@ def _get_json(worker, path, timeout):
         return json.loads(r.read().decode("utf-8"))
 
 
-def healthy_workers(cfg, workers, timeout=3):
-    """并发探活，返回 [(worker, weight)]；全挂 = 空列表（调用方退化单机）。"""
+def healthy_workers(workers, timeout=3):
+    """并发探活，返回在线 worker 列表；全挂 = 空列表（调用方退化单机）。"""
     out, lock = [], threading.Lock()
 
     def probe(w):
@@ -74,7 +120,7 @@ def healthy_workers(cfg, workers, timeout=3):
         t.start()
     for t in ts:
         t.join(timeout + 1)
-    return [(w, float(w.get("weight") or 1)) for w in out]
+    return out
 
 
 def _split(total, weights):
@@ -158,16 +204,18 @@ def coordinate(renderer, params, progress, should_cancel):
     timeout_per_image = int(dist.get("timeout_s_per_image", 600))
 
     styles = [str(s) for s in (params.get("styles") or [])]
-    workers = healthy_workers(cfg, _worker_enabled(cfg)[1])
+    workers = healthy_workers(workers_of(cfg))
     if not workers:                      # 全部不健康：退化单机（现状行为）
         return renderer.render(params, progress, should_cancel)
 
-    counts = _split(len(styles), [1.0] + [w for _, w in workers])   # [本机, 远端...]
+    counts = _split(len(styles), _weights_for(cfg, workers))        # [本机, 远端...]
     ranges, pos = [], 0
     for n in counts[1:]:                 # 远端先拿前面的风格段
         ranges.append((pos, pos + n))
         pos += n
     local_range = (pos, len(styles))
+    for worker, (a, b) in zip(workers, ranges):
+        progress("fanout: %s 分到 %d 条" % (worker["url"], b - a))
 
     def check_cancel():
         if should_cancel and should_cancel():
@@ -192,8 +240,8 @@ def coordinate(renderer, params, progress, should_cancel):
 
     # ---- 子任务②③ 远端派发（网络线程），本机份额同时开跑 ----
     deadline = time.monotonic() + 120 + timeout_per_image * (len(styles) + 1)
-    chunks = []                          # [{styles, tensors?, bytes?, err}]
-    for (worker, _w), (a, b) in zip(workers, ranges):
+    chunks = []                          # [{styles, pngs?, err}]
+    for worker, (a, b) in zip(workers, ranges):
         chunks.append({"worker": worker, "label": worker["url"].split("//")[-1][:24],
                        "styles": styles[a:b], "a": a, "b": b,
                        "rid": None, "pngs": None, "err": None})
@@ -202,12 +250,15 @@ def coordinate(renderer, params, progress, should_cancel):
         try:
             job = {"skip_step1": True, "styles": ch["styles"], "analysis": analysis,
                    "seed2": seed2, "width": width, "height": height, "steps": steps}
+            t0 = time.monotonic()
             ch["rid"] = _post_render(ch["worker"], step1_bytes, job, 30)
             pngs = _poll_done(ch["worker"], ch["rid"], len(ch["styles"]),
                               timeout_per_image,
                               lambda s: progress("fanout[%s] %s" % (ch["label"], s)),
                               should_cancel, ch["label"], deadline)
             ch["pngs"] = [_download(ch["worker"], im["filename"]) for im in pngs]
+            _record_speed(ch["worker"]["url"], len(ch["styles"]),
+                          time.monotonic() - t0)
         except RenderCancelled:
             raise
         except Exception as e:  # noqa: BLE001 - 失败段由本机兜底
@@ -221,10 +272,13 @@ def coordinate(renderer, params, progress, should_cancel):
     # 本机份额：尾部风格段，先落盘到暂存前缀（Step2hold），收集阶段改名进 Step2
     # 序列（解码张量绝不跨网络等待持有——见 render_styles 注释）
     local_styles = styles[local_range[0]:local_range[1]]
-    local_files = renderer.render_styles(
-        im1, local_styles, analysis, seed2, steps, width, height,
-        progress, check_cancel, tag="local_style",
-        save_prefix="Step2hold") if local_styles else []
+    local_files, t_local = [], time.monotonic()
+    if local_styles:
+        local_files = renderer.render_styles(
+            im1, local_styles, analysis, seed2, steps, width, height,
+            progress, check_cancel, tag="local_style",
+            save_prefix="Step2hold")
+        _record_speed("local", len(local_styles), time.monotonic() - t_local)
 
     deadline_hit = False
     for ch in remotes:

@@ -49,7 +49,13 @@ def cmd_check(args):
 
 def cmd_serve(args):
     from . import config, server
-    server.run(config.load(args.config))
+    cfg = config.load(args.config)
+    # 常驻进程的 stdout/stderr 是 supervisor 给的句柄；那个文件被清空/替换后，进程里任何一次
+    # print 都会 OSError 22，采样阶段一打印就整单失败。自己拿一个日志文件，谁都不依赖。
+    log = open(os.path.join(config.ROOT, "engine.log"), "a", encoding="utf-8",
+               errors="replace", buffering=1)
+    sys.stdout = sys.stderr = log
+    server.run(cfg)
 
 
 def cmd_render(args):

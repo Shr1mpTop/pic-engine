@@ -115,7 +115,10 @@ class Runner:
             except Exception as e:  # noqa: BLE001 - 单任务失败不许带崩引擎
                 job.status = "error"
                 job.error = "%s: %s" % (type(e).__name__, e)
-                traceback.print_exc()
+                try:
+                    traceback.print_exc()
+                except OSError:      # 打印通道坏了（坏句柄）也不能让 worker 退出
+                    pass
             finally:
                 job.done_ts = time.time()
 

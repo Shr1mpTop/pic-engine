@@ -29,6 +29,16 @@
    默认 False，`cli_args` 走 `parse_args([])`，天然支持嵌入式。显存调度
    （TE 8.9G / DiT 6.9G / VAE 0.6G 在 6GB 卡上的换入换出）由
    `comfy.model_management` 全权负责，与服务器进程内逐节点执行同行为。
+1a. **DynamicVRAM 初始化必须自己补**（本 fork 无服务器使用的头号坑）。
+   `main.py:267-307` 在启动时做三件事：`comfy_aimdo.control.init_devices(...)`、
+   `CoreModelPatcher = ModelPatcherDynamic`、`memory_management.aimdo_enabled=True`。
+   引擎不跑 main.py，缺这三步时 `load_models_gpu` 走经典路径——实测症状：
+   VAE 被 `throw_exception_if_invalid` 提前整包载入（"loaded completely ...
+   full load: True"），随后 TE 拿到 "loaded partially; **0.00 MB usable**,
+   8916.89 MB offloaded"，8.9GB 编码器全掉 CPU，TE 编码 25 分钟不完。
+   补上后与生产同路径（"Model ... prepared for dynamic VRAM loading ... Staged"，
+   vbar 动态分页，TE 编码 ~15s）。已复刻进 `bootstrap._enable_dynamic_vram()`，
+   含 torch<2.8 守卫与 comfy-aimdo 0.4.9 旧协议兼容，与 main.py 逐行对齐。
 2. **身材分析归 gateway**。生产里 `OutfitBodyAnalyzer` 节点从不真正执行——
    gateway 在派发前把它替换成固定 JSON（真实分析或兜底值）。引擎契约直接
    收 `analysis`，云端调用/缓存/降级链留在 gateway 一处。

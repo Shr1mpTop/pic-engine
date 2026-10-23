@@ -17,7 +17,9 @@
   `_test_integration.py`（DB 一致性副本上全链路：expected 修正→派发→对账→
   3/3 张入账，288s ✓）。
 
-切换生产：gw 卡重启时带 `ENGINE_URL=http://127.0.0.1:8195`；回滚 = 去掉变量重启。
+切换生产：**已完成（2026-10-23 深夜）**——ENGINE_URL 默认值已翻转为引擎地址，
+gateway 重启即生效；同时 `_ana_fetch` 改为 gateway 直连 body_analyzer（分析不再
+经过 ComfyUI）。回滚：设环境变量 `ENGINE_URL=""`（走 ComfyUI 8189）重启 gw。
 以下为原设计稿（部署顺序与风险对策仍然有效），备查。
 
 ## 契约翻译（dispatch 时刻，payload -> 引擎参数）

@@ -1,6 +1,8 @@
-config.json
+config*.json
+!config.example.json
 __pycache__/
 *.pyc
 output/
 *.log
 .DS_Store
+bridge_test.db

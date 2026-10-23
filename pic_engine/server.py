@@ -40,6 +40,8 @@ def _resolve_params(cfg, data):
         "seed2": data.get("seed2"),
         "width": w, "height": h, "steps": steps,
         "quality": quality,
+        # 叶子任务：photo 即协调者发来的基础图，跳过 Step1 直跑造型段
+        "skip_step1": bool(data.get("skip_step1")),
     }
 
 

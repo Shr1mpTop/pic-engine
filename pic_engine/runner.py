@@ -12,6 +12,7 @@ import time
 import traceback
 import uuid
 
+from . import scheduler
 from .pipeline import Renderer, RenderCancelled
 
 
@@ -101,9 +102,15 @@ class Runner:
             job.status = "running"
             job.started_ts = time.time()
             try:
-                res = self._renderer.render(
-                    job.params, progress=lambda s, j=job: self._stage(j, s),
-                    should_cancel=lambda j=job: j.cancel_requested)
+                if scheduler.should_distribute(self.cfg, job.params):
+                    res = scheduler.coordinate(
+                        self._renderer, job.params,
+                        progress=lambda s, j=job: self._stage(j, s),
+                        should_cancel=lambda j=job: j.cancel_requested)
+                else:
+                    res = self._renderer.render(
+                        job.params, progress=lambda s, j=job: self._stage(j, s),
+                        should_cancel=lambda j=job: j.cancel_requested)
                 job.images = res["images"]
                 job.seed1 = res["seed1"]
                 job.seed2 = res["seed2"]

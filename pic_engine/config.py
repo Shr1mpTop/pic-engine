@@ -40,6 +40,15 @@ DEFAULTS = {
     "quality": DEFAULT_QUALITY,
     "prompts": {"step1_template": "", "negative": ""},  # 由 extract 工具回填，勿手抄
     "default_analysis_file": os.path.join(ROOT, "defaults", "analysis_fallback.json"),
+    # 子任务分发（方案一）：enabled=false 时永远本机串行（现状）。
+    # workers = "远端"引擎列表（不含本机）；本机固定权重 1 并吃掉整除余数。
+    # 叶子任务（skip_step1）绝不二次分发；worker 机器也不应开 enabled（防环）。
+    "distribute": {
+        "enabled": False,
+        "workers": [],               # 例: [{"url": "http://100.x.x.x:8195", "weight": 1}]
+        "timeout_s_per_image": 600,  # 远端子任务预算 = 120 + 条数×该值
+        "min_styles": 2,             # 造型数低于该值不分发（省一次网络往返）
+    },
 }
 
 

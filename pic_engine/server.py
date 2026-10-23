@@ -97,6 +97,13 @@ def make_app(cfg, runner, device):
             return web.json_response({"error": "未知任务"}, status=404)
         return web.json_response(snap)
 
+    async def cancel(request):
+        rid = request.match_info["rid"]
+        st = runner.cancel(rid)
+        if st is None:
+            return web.json_response({"error": "未知任务"}, status=404)
+        return web.json_response({"rid": rid, "status": st})
+
     async def view(request):
         fn = request.query.get("filename", "")
         typ = request.query.get("type", "output")
@@ -111,6 +118,7 @@ def make_app(cfg, runner, device):
     app.router.add_get("/health", health)
     app.router.add_post("/render", render)
     app.router.add_get("/result/{rid}", result)
+    app.router.add_post("/cancel/{rid}", cancel)
     app.router.add_get("/view", view)
     return app
 

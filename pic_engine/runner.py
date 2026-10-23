@@ -12,12 +12,13 @@ import time
 import traceback
 import uuid
 
-from .pipeline import Renderer
+from .pipeline import Renderer, RenderCancelled
 
 
 class Job:
     __slots__ = ("rid", "params", "status", "stage", "images", "error",
-                 "seed1", "seed2", "expected", "enqueued_ts", "started_ts", "done_ts")
+                 "seed1", "seed2", "expected", "enqueued_ts", "started_ts", "done_ts",
+                 "cancel_requested")
 
     def __init__(self, params):
         self.rid = "r" + uuid.uuid4().hex[:10]
@@ -32,6 +33,7 @@ class Job:
         self.enqueued_ts = time.time()
         self.started_ts = None
         self.done_ts = None
+        self.cancel_requested = False
 
     def snapshot(self):
         return {k: getattr(self, k) for k in (
@@ -64,6 +66,20 @@ class Runner:
             job = self._jobs.get(rid)
             return job.snapshot() if job else None
 
+    def cancel(self, rid):
+        """协作取消：排队中立即作废；运行中在段落边界生效（引擎存活）。"""
+        with self._lock:
+            job = self._jobs.get(rid)
+            if job is None:
+                return None
+            if job.status == "queued":
+                job.status = "cancelled"
+                job.error = "已取消"
+                job.done_ts = time.time()
+            elif job.status == "running":
+                job.cancel_requested = True
+            return job.status
+
     def stats(self):
         with self._lock:
             jobs = list(self._jobs.values())
@@ -80,18 +96,22 @@ class Runner:
             rid = self._q.get()
             with self._lock:
                 job = self._jobs.get(rid)
-            if job is None:
+            if job is None or job.status == "cancelled":
                 continue
             job.status = "running"
             job.started_ts = time.time()
             try:
                 res = self._renderer.render(
-                    job.params, progress=lambda s, j=job: self._stage(j, s))
+                    job.params, progress=lambda s, j=job: self._stage(j, s),
+                    should_cancel=lambda j=job: j.cancel_requested)
                 job.images = res["images"]
                 job.seed1 = res["seed1"]
                 job.seed2 = res["seed2"]
                 job.expected = res["expected"]
                 job.status = "done"
+            except RenderCancelled:
+                job.status = "cancelled"
+                job.error = "已取消"
             except Exception as e:  # noqa: BLE001 - 单任务失败不许带崩引擎
                 job.status = "error"
                 job.error = "%s: %s" % (type(e).__name__, e)

@@ -24,6 +24,10 @@ import time
 from . import template
 
 
+class RenderCancelled(Exception):
+    """协作取消：should_cancel 回调在段落边界检查并抛出，整单作废、引擎存活。"""
+
+
 class Renderer:
     """模型三件套惰性加载 + 单任务渲染。只在 worker 线程使用（GPU 串行）。
     显存调度完全交给 fork 的 comfy.model_management：TE/DiT/VAE 之间的换入换出
@@ -88,9 +92,14 @@ class Renderer:
 
     # ---- 主流程 ----
 
-    def render(self, params, progress=lambda s: None):
+    def render(self, params, progress=lambda s: None, should_cancel=None):
         """params: photo/styles/analysis/seed1/seed2/width/height/steps。
-        返回 {images, seed1, seed2, expected}；任何失败抛异常，引擎进程保持存活。"""
+        返回 {images, seed1, seed2, expected}；任何失败抛异常，引擎进程保持存活。
+        should_cancel：段落边界轮询，真则抛 RenderCancelled（gateway 取消/看门狗用）。"""
+        def check_cancel():
+            if should_cancel and should_cancel():
+                raise RenderCancelled()
+
         photo = os.path.basename(str(params["photo"]))
         styles = [str(s) for s in (params.get("styles") or [])]
         analysis = self._analysis_of(params)
@@ -106,12 +115,14 @@ class Renderer:
         negative = self.cfg["prompts"]["negative"]
 
         self._ensure_models(progress)
+        check_cancel()
         photo_img = self.f.LoadImage().load_image(photo)[0]
 
         # ---- Step1：基础图（参考 = 用户照片）----
         progress("step1_encode")
         p1 = template.apply(analysis, self.cfg["prompts"]["step1_template"])
         pos, neg = self._encode(p1, negative, photo_img)
+        check_cancel()
         progress("step1_sample")
         lat1 = self._sample(pos, neg, seed1, steps, width, height)
         progress("step1_decode")
@@ -120,6 +131,7 @@ class Renderer:
 
         # ---- Step2：每个造型一张（参考 = Step1 基础图；同 job 共用 seed2）----
         for i, style in enumerate(styles):
+            check_cancel()
             progress("style_%d_of_%d" % (i + 1, len(styles)))
             p2 = template.apply(analysis, style)
             pos2, neg2 = self._encode(p2, negative, im1)

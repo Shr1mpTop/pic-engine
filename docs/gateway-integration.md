@@ -1,7 +1,24 @@
-# Gateway 桥接设计（下一阶段：接入生产）
+# Gateway 桥接（已实现，2026-10-23 深夜验证通过）
 
-目标：outfit-gateway 的派发目标从 ComfyUI `/prompt` 换成引擎 `/render`，
+目标：outfit-gateway 的派发目标从 ComfyUI `/prompt` 换成本引擎 `/render`，
 **面板与所有 `/gw/*` 接口零改动**（客户端无感）。ComfyUI 本体保留为设计工具。
+
+**落地形态**（与下文设计稿的差异以本节为准）：
+
+- `outfit-gateway\engine_bridge.py`：payload→引擎参数翻译（photo/styles/analysis/
+  seeds/w/h/steps）+ `up/submit/result/cancel` HTTP 客户端。`ENGINE_URL` 环境变量
+  为总开关，**不设=走 ComfyUI，行为零变化**。
+- gateway.py 五处引擎分支：dispatcher 派发（submit 返回 expected，顺手修正
+  过期的 jobs.expected 列——重试重建后载荷可能缩水）、对账 `engine_reconcile()`
+  （轮询 /result；404=引擎重启丢 rid → 零产出自动重排/部分产出保留成图）、
+  看门狗 intervene（协作取消）、gw_cancel/gw_job_delete 取消、gw_status。
+- 引擎侧新增 `POST /cancel/{rid}`（协作取消：排队即作废，运行中段落边界生效）。
+- 自测脚本：`outfit-gateway\_test_bridge.py`（翻译器 vs 6 条真实载荷）、
+  `_test_integration.py`（DB 一致性副本上全链路：expected 修正→派发→对账→
+  3/3 张入账，288s ✓）。
+
+切换生产：gw 卡重启时带 `ENGINE_URL=http://127.0.0.1:8195`；回滚 = 去掉变量重启。
+以下为原设计稿（部署顺序与风险对策仍然有效），备查。
 
 ## 契约翻译（dispatch 时刻，payload -> 引擎参数）
 

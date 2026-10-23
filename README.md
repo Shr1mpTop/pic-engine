@@ -47,7 +47,8 @@ set PY=E:\github\ComfyUI\python_embeded\python.exe
 |---|---|
 | `GET /health` | `{ok, version, device, stats:{queue,running,total}, models, ...}` |
 | `POST /render` | JSON：`{photo, styles:[模板...], analysis?, quality?, seed1?, seed2?, width?, height?, steps?}` → `{rid}`；multipart：`photo_file`(二进制)+`job`(JSON) 供远端 worker 直传照片 |
-| `GET /result/{rid}` | `{status: queued\|running\|done\|error, stage, images:[{filename,subfolder,type}], seed1, seed2, expected, error}` |
+| `GET /result/{rid}` | `{status: queued\|running\|done\|error\|cancelled, stage, images:[{filename,subfolder,type}], seed1, seed2, expected, error}` |
+| `POST /cancel/{rid}` | 协作取消：排队中立即作废；运行中在段落边界生效（引擎存活） |
 | `GET /view?filename=&type=output` | 取输出图（远端收图） |
 
 - `photo` 必须已在引擎 input 目录（默认 = fork 的 `input/`，与 gateway 上传目录同一处）；
@@ -69,16 +70,24 @@ set PY=E:\github\ComfyUI\python_embeded\python.exe
 ## Mac 部署
 
 ```bash
-git clone <本仓库> ~/pic-engine && cd ~/pic-engine
-python3 scripts/extract_from_workflow.py \
-    --workflow ~/ComfyUI/ComfyUI/custom_nodes/outfit_studio/web/workflow.json \
-    --config config.json --comfyui-root ~/ComfyUI/ComfyUI
-PY=~/ComfyUI/venv/bin/python ./scripts/start_mac.sh   # host 改 0.0.0.0 供 LAN 调度
+git clone https://github.com/Shr1mpTop/pic-engine.git && cd pic-engine
+cp config.example.json config.json
+#   改两处：comfyui_root 指向 Mac 的 ComfyUI fork 目录；host 改 0.0.0.0（供 LAN 调度）
+PY=~/ComfyUI/venv/bin/python ./scripts/start_mac.sh   # 用跑 ComfyUI 的那个解释器
 ```
 
-前提（两台机器已天然满足）：同一 ComfyUI fork、同三件套模型
-（此前已做 SHA256 级核对一致）、`outfit_studio/web/workflow.json`。
-**Mac 不需要安装任何 custom node**——业务逻辑（分析/模板替换）已编译进引擎。
+预检（不加载模型）：`$PY -m pic_engine check --config config.json`
+
+要点：
+
+- **配置对齐走仓库**：`config.example.json` 就是对齐产物（`_aligned` 带 workflow
+  sha256 + 时间戳溯源）。PC 端 workflow 改版后跑 extract 工具重新生成并提交，
+  Mac `git pull` 即同步——**Mac 不需要 outfit_studio / workflow.json**；
+- **Mac 不需要安装任何 custom node**：业务逻辑（分析注入、模板替换）已编译进引擎；
+- bootstrap 在 Mac 上自动退回经典 ModelPatcher（comfy-aimdo 仅 Win/Linux，
+  `init()` 因不支持的操作系统返回 False，`_enable_dynamic_vram` 据此跳过），
+  无需任何平台条件配置；
+- 前提：同一 ComfyUI fork、同三件套模型（两机已做 SHA256 级核对一致）。
 
 ## 更新（客户端无感）
 

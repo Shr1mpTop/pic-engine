@@ -22,6 +22,9 @@ import os
 import random
 import time
 
+import numpy as np
+from PIL import Image
+
 from . import template
 
 
@@ -120,6 +123,24 @@ class Renderer:
         res = self.f.SaveImage().save_images(images=images, filename_prefix=prefix)
         return (res.get("ui") or {}).get("images") or []
 
+    # ---- 单元模式（断点续跑的原子渲染） ----
+
+    def _unit_target(self, params):
+        """unit_key -> 确定性输出文件名与绝对路径。文件名即幂等锚点：
+        (jid, idx) 决定名字，重试/重派落同一文件，绝不产生第二份。"""
+        name = ("Step2_" if params.get("ref") else "Step1_") + params["unit_key"] + ".png"
+        return name, os.path.join(self.cfg["output_dir"], name)
+
+    def _save_unit(self, images, path):
+        """SaveImage 的确定性版：像素转换与 SaveImage 一致，写入走 tmp + os.replace
+        原子落地 —— “文件存在 ⇒ 是一张完整的图”这个不变量是上层断点续跑
+        跳过逻辑的地基（崩溃最多留下 .tmp，绝不会留下半个成品）。"""
+        arr = np.clip(255. * images.cpu().numpy().squeeze(), 0, 255).astype(np.uint8)
+        tmp = path + ".tmp"
+        Image.fromarray(arr).save(tmp, format="PNG")
+        os.replace(tmp, path)
+        return [{"filename": os.path.basename(path), "subfolder": "", "type": "output"}]
+
     def analysis_of(self, params):
         a = params.get("analysis")
         if a is None or a == "":
@@ -129,8 +150,9 @@ class Renderer:
 
     # ---- 段落：Step1（基础图） ----
 
-    def render_step1(self, params, photo_img, progress, check_cancel):
-        """Step1 段。返回 (im1, images, seed1)。"""
+    def render_step1(self, params, photo_img, progress, check_cancel, on_images=None,
+                     saver=None):
+        """Step1 段。返回 (im1, images, seed1)。saver：单元模式传确定性落盘。"""
         seed1 = params.get("seed1")
         if not isinstance(seed1, int) or seed1 < 0:
             seed1 = random.randrange(10 ** 15)     # 与 gateway randomize_seeds 同量级
@@ -145,13 +167,19 @@ class Renderer:
         lat1 = self._sample(pos, neg, seed1, steps, width, height)
         progress("step1_decode")
         im1 = self.f.VAEDecode().decode(vae=self._vae, samples=lat1)[0]
-        return im1, self._save(im1, "Step1"), seed1
+        images = (saver or (lambda imgs: self._save(imgs, "Step1")))(im1)
+        if on_images:
+            on_images(images)       # 增量回报：基础图一落盘就让上层看得见
+        return im1, images, seed1
 
     # ---- 段落：Step2（造型，参考 = 基础图） ----
 
     def render_styles(self, im1, styles, analysis, seed2, steps, width, height,
-                      progress=lambda s: None, check_cancel=lambda: None, tag="style"):
+                      progress=lambda s: None, check_cancel=lambda: None, tag="style",
+                      on_images=None, saver=None):
         """每条风格一张（同批共用 seed2）。返回 images 清单（顺序 = styles 顺序）。"""
+        if saver is None:
+            saver = lambda imgs: self._save(imgs, "Step2")  # noqa: E731
         images = []
         negative = self.cfg["prompts"]["negative"]
         for i, style in enumerate(styles):
@@ -161,12 +189,14 @@ class Renderer:
             pos2, neg2 = self._encode(p2, negative, im1)
             lat2 = self._sample(pos2, neg2, seed2, steps, width, height)
             im2 = self.f.VAEDecode().decode(vae=self._vae, samples=lat2)[0]
-            images += self._save(im2, "Step2")
+            images += saver(im2)
+            if on_images:
+                on_images(images)   # 每套造型出一张就回报一次（多套长任务靠它显示进度）
         return images
 
     # ---- 主流程 ----
 
-    def _render_low_ram(self, params, progress, check_cancel):
+    def _render_low_ram(self, params, progress, check_cancel, on_images=None):
         """low_ram 编排：TE 编码 → 卸 TE → DiT 采样 → 卸 DiT → VAE 解码。
         同阶段批处理（多造型一次编码/一次采样），把模型切换次数压到最少；
         参考图（Step2 用 Step1 解码图）以张量形态跨阶段传递。"""
@@ -218,20 +248,30 @@ class Renderer:
         lat1 = sample_all([cond1], seed1)[0]
         im1 = decode_all([lat1])[0]
         images = self._save(im1, "Step1")
+        if on_images:
+            on_images(images)
 
         if styles:
             conds = encode_all(styles, im1)     # 参考 = Step1 基础图
             lats = sample_all(conds, seed2)
             for im in decode_all(lats):
                 images += self._save(im, "Step2")
+                if on_images:
+                    on_images(images)
         self._release()
         return {"images": images, "seed1": seed1, "seed2": seed2,
                 "expected": len(styles) + 1}
 
-    def render(self, params, progress=lambda s: None, should_cancel=None):
-        """params: photo/styles/analysis/seed1/seed2/width/height/steps。
-        返回 {images, seed1, seed2, expected}；任何失败抛异常，引擎进程保持存活。
-        should_cancel：段落边界轮询，真则抛 RenderCancelled（gateway 取消/看门狗用）。"""
+    def render(self, params, progress=lambda s: None, should_cancel=None,
+               on_images=None):
+        """params: photo|ref / styles / analysis / seed1 / seed2 / width / height /
+        steps / unit_key。返回 {images, seed1, seed2, expected}；任何失败抛异常，
+        引擎进程保持存活。should_cancel：段落边界轮询，真则抛 RenderCancelled
+        （gateway 取消/看门狗用）。
+        单元模式（断点续跑的原子渲染，gateway 专用）：
+          ref       = Step1 基础图文件名（output 目录），只渲染 styles 里的造型；
+          unit_key  = 确定性落盘键，渲染前文件已在 → 直接返回（幂等跳过，零计算）。
+        photo + 无 ref = 常规整单（Step1 + styles 循环，run.py render 仍走这条）。"""
         def check_cancel():
             if should_cancel and should_cancel():
                 raise RenderCancelled()
@@ -246,15 +286,49 @@ class Renderer:
         height = int(params["height"])
         steps = int(params["steps"])
 
+        unit_key = str(params.get("unit_key") or "")
+        path = None
+        if unit_key:
+            _, path = self._unit_target(params)
+            if os.path.isfile(path):
+                progress("unit_skip")   # 这张图上次已经画完落盘：零计算直接认领
+                name = os.path.basename(path)
+                return {"images": [{"filename": name, "subfolder": "", "type": "output"}],
+                        "seed1": params.get("seed1"), "seed2": seed2, "expected": 1}
+
+        ref = os.path.basename(str(params.get("ref") or ""))
+        if ref:
+            # Step2 单元：Step1 基础图作参考。[output] 注解让真 LoadImage 走
+            # fork 同一个文件解析路径（folder_paths.get_annotated_filepath）。
+            self._ensure_models(progress)
+            check_cancel()
+            im1 = self.f.LoadImage().load_image(ref + " [output]")[0]
+            saver = ((lambda imgs: self._save_unit(imgs, path)) if unit_key
+                     else (lambda imgs: self._save(imgs, "Step2")))
+            images = self.render_styles(im1, styles, analysis, seed2, steps, width,
+                                        height, progress, check_cancel,
+                                        on_images=on_images, saver=saver)
+            return {"images": images, "seed1": None, "seed2": seed2,
+                    "expected": max(1, len(styles))}
+
         if self.low_ram:
-            return self._render_low_ram(params, progress, check_cancel)
+            return self._render_low_ram(params, progress, check_cancel, on_images)
 
         self._ensure_models(progress)
         check_cancel()
         photo_img = self.f.LoadImage().load_image(photo)[0]
 
-        im1, images, seed1 = self.render_step1(params, photo_img, progress, check_cancel)
+        if unit_key:
+            # Step1 单元：只出基础图（gateway 的单元派发不附 styles）
+            im1, images, seed1 = self.render_step1(params, photo_img, progress,
+                                                   check_cancel, on_images=on_images,
+                                                   saver=lambda imgs: self._save_unit(imgs, path))
+            return {"images": images, "seed1": seed1, "seed2": seed2, "expected": 1}
+
+        im1, images, seed1 = self.render_step1(params, photo_img, progress, check_cancel,
+                                               on_images=on_images)
         images += self.render_styles(im1, styles, analysis, seed2, steps,
-                                     width, height, progress, check_cancel)
+                                     width, height, progress, check_cancel,
+                                     on_images=on_images)
         return {"images": images, "seed1": seed1, "seed2": seed2,
                 "expected": len(styles) + 1}

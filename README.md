@@ -46,16 +46,30 @@ set PY=E:\github\ComfyUI\python_embeded\python.exe
 | 端点 | 说明 |
 |---|---|
 | `GET /health` | `{ok, version, device, stats:{queue,running,total}, models, ...}` |
-| `POST /render` | JSON：`{photo, styles:[模板...], analysis?, quality?, seed1?, seed2?, width?, height?, steps?}` → `{rid}`；multipart：`photo_file`(二进制)+`job`(JSON) 供远端 worker 直传照片 |
+| `POST /render` | JSON：`{photo|ref, unit_key?, styles:[模板...], analysis?, quality?, seed1?, seed2?, width?, height?, steps?}` → `{rid}`；multipart：`photo_file`(二进制)+`job`(JSON) 供远端 worker 直传照片 |
 | `GET /result/{rid}` | `{status: queued\|running\|done\|error\|cancelled, stage, images:[{filename,subfolder,type}], seed1, seed2, expected, error}` |
 | `POST /cancel/{rid}` | 协作取消：排队中立即作废；运行中在段落边界生效（引擎存活） |
 | `GET /view?filename=&type=output` | 取输出图（远端收图） |
 
-- `photo` 必须已在引擎 input 目录（默认 = fork 的 `input/`，与 gateway 上传目录同一处）；
+- `photo`（input 目录，整单/Step1 单元）与 `ref`（output 目录的 Step1 基础图，Step2
+  单元）**二选一**；ref 以 `文件名 [output]` 注解走 fork 的真 LoadImage，预处理零复刻；
+- `unit_key` = 断点续跑的幂等锚点：给了就确定性落盘 `Step1_/Step2_{unit_key}.png`，
+  **渲染前文件已在 → 直接返回（零计算跳过）**；写入走 tmp+os.replace 原子落地，
+  "文件存在 ⇒ 完整成品"这条不变量供上层跳过/认领逻辑依赖；
 - `analysis` 缺省用 `defaults/analysis_fallback.json`（生产路径由 gateway 注入真实分析结果）；
 - `styles` 为空 = 只出 Step1 基础图（expected=1），与 workflow 的 `simple/0` 循环等价；
-- 输出文件名沿用 ComfyUI 规则（`Step1_00001_.png`、`Step2_00001_.png`...），gateway 的按前缀扫盘补账逻辑直接可用；
-- 一次任务的 seed1（Step1）/ seed2（Step2 全部造型共用）不传则随机（10^15 量级，与 gateway 一致），结果里回传。
+  带 `ref` 时只渲染 styles 里的造型（单元模式，expected=单数）；
+- 不带 `unit_key` 的调用（`run.py render`、手工调试）保持旧行为：输出按 ComfyUI
+  规则计数命名（`Step1_00001_.png`...）；
+- 一次任务的 seed1（Step1）/ seed2（Step2 全部造型共用）不传则随机（10^15 量级，与
+  gateway 一致），结果里回传。生产路径由 gateway 在单元物化时刻冻结种子，重试可重现。
+
+## 断点续跑（v0.4.0 起）
+
+任务清单不在引擎里，在 outfit-gateway 的 `job_units` 表（一张成品图 = 一个原子单元：
+u0 = Step1 基础图，u1..N = 逐造型，idx 序即依赖序）。引擎于是可以保持无状态：
+重启/崩溃丢 rid 只损失正在画的那一张，已完成单元靠确定性文件名直接认领，
+未完成/失败单元由 gateway 原地重派。引擎自身只需要 `unit_key` 这一个配合点。
 
 ## 与 workflow.json 的对齐
 

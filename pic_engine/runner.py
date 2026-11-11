@@ -103,7 +103,8 @@ class Runner:
             try:
                 res = self._renderer.render(
                     job.params, progress=lambda s, j=job: self._stage(j, s),
-                    should_cancel=lambda j=job: j.cancel_requested)
+                    should_cancel=lambda j=job: j.cancel_requested,
+                    on_images=lambda imgs, j=job: self._set_images(j, imgs))
                 job.images = res["images"]
                 job.seed1 = res["seed1"]
                 job.seed2 = res["seed2"]
@@ -126,3 +127,9 @@ class Runner:
         with self._lock:
             if job.status == "running":
                 job.stage = stage
+
+    def _set_images(self, job, images):
+        """增量出图：pipeline 每存一张就回报一次，/result 的 images 随之增长。"""
+        with self._lock:
+            if job.status == "running":
+                job.images = list(images)

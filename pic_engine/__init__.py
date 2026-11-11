@@ -8,4 +8,4 @@
 语义与 outfit_studio/web/workflow.json 逐节点对齐，对齐依据见 docs/alignment.md。
 """
 
-__version__ = "0.3.1"
+__version__ = "0.4.0"

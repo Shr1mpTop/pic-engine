@@ -18,22 +18,32 @@ from aiohttp import web
 from . import __version__
 from . import bootstrap
 from . import config as config_mod
+from .contract import CONTRACT_VERSION
 
 SAFE_NAME = re.compile(r"^[\w.\-]+$")
 UPLOAD_EXT = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
 
 
 def _resolve_params(cfg, data):
-    """请求体 -> 引擎参数。photo 必须已存在于 input 目录。"""
+    """请求体 -> 引擎参数。photo（input 目录）与 ref（output 目录的 Step1 基础图）
+    二选一：常规整单/Step1 单元用 photo，Step2 单元用 ref。"""
     photo = os.path.basename(str(data.get("photo") or ""))
-    if not photo:
-        raise ValueError("缺 photo")
-    if not os.path.isfile(os.path.join(cfg["input_dir"], photo)):
+    ref = os.path.basename(str(data.get("ref") or ""))
+    if bool(photo) == bool(ref):
+        raise ValueError("photo 与 ref 必须二选一")
+    if photo and not os.path.isfile(os.path.join(cfg["input_dir"], photo)):
         raise ValueError("照片不在引擎 input 目录：%s" % photo)
+    if ref and not os.path.isfile(os.path.join(cfg["output_dir"], ref)):
+        raise ValueError("参考图不在引擎 output 目录：%s" % ref)
+    unit_key = str(data.get("unit_key") or "")
+    if unit_key and not SAFE_NAME.match(unit_key):
+        raise ValueError("unit_key 只允许字母数字._-")
     quality = str(data.get("quality") or "standard")
     w, h, steps = config_mod.quality_params(cfg, quality, data)
     return {
         "photo": photo,
+        "ref": ref,
+        "unit_key": unit_key,
         "styles": [str(s) for s in (data.get("styles") or [])],
         "analysis": data.get("analysis"),
         "seed1": data.get("seed1"),
@@ -51,6 +61,14 @@ def make_app(cfg, runner, device):
             "models": cfg["models"],
             "input_dir": cfg["input_dir"], "output_dir": cfg["output_dir"],
             "now": time.time(),
+        })
+
+    async def capabilities(request):
+        """契约自报（gateway 派发前协商）：主版本高于网关支持的会被拒绝提交。"""
+        return web.json_response({
+            "engine": "pic-engine", "version": __version__,
+            "contract_version": CONTRACT_VERSION,
+            "capabilities": {"render": True, "cancel": True, "units": True},
         })
 
     async def render(request):
@@ -116,6 +134,7 @@ def make_app(cfg, runner, device):
 
     app = web.Application(client_max_size=64 * 1024 * 1024)
     app.router.add_get("/health", health)
+    app.router.add_get("/capabilities", capabilities)
     app.router.add_post("/render", render)
     app.router.add_get("/result/{rid}", result)
     app.router.add_post("/cancel/{rid}", cancel)

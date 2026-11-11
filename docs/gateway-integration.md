@@ -1,25 +1,31 @@
-# Gateway 桥接（已实现，2026-10-23 深夜验证通过）
+# Gateway 桥接（已实现，2026-10-23 深夜验证通过；2026-10-25 起升级为单元调度）
 
 目标：outfit-gateway 的派发目标从 ComfyUI `/prompt` 换成本引擎 `/render`，
 **面板与所有 `/gw/*` 接口零改动**（客户端无感）。ComfyUI 本体保留为设计工具。
 
-**落地形态**（与下文设计稿的差异以本节为准）：
+**落地形态（v0.4.0 单元调度，2026-10-25）**：
 
-- `outfit-gateway\engine_bridge.py`：payload→引擎参数翻译（photo/styles/analysis/
-  seeds/w/h/steps）+ `up/submit/result/cancel` HTTP 客户端。`ENGINE_URL` 环境变量
-  为总开关，**不设=走 ComfyUI，行为零变化**。
-- gateway.py 五处引擎分支：dispatcher 派发（submit 返回 expected，顺手修正
-  过期的 jobs.expected 列——重试重建后载荷可能缩水）、对账 `engine_reconcile()`
-  （轮询 /result；404=引擎重启丢 rid → 零产出自动重排/部分产出保留成图）、
-  看门狗 intervene（协作取消）、gw_cancel/gw_job_delete 取消、gw_status。
-- 引擎侧新增 `POST /cancel/{rid}`（协作取消：排队即作废，运行中段落边界生效）。
-- 自测脚本：`outfit-gateway\_test_bridge.py`（翻译器 vs 6 条真实载荷）、
-  `_test_integration.py`（DB 一致性副本上全链路：expected 修正→派发→对账→
-  3/3 张入账，288s ✓）。
+- `outfit-gateway\engine_bridge.py`：`units_of()` 把 payload 物化成**原子单元清单**
+  （一张成品图 = 一个单元：u0 = Step1 基础图，u1..N = 逐造型），模板/种子/分析/
+  尺寸在物化时刻全部冻结，文件名 `Step1_/Step2_{jid}_u{i}.png` 由 (jid, idx) 确定
+  = 幂等锚点；`submit_unit()` 逐单元派发（style 单元以 `ref` 引用 Step1 文件，
+  引擎用 `[output]` 注解走 fork 真 LoadImage 读图，预处理零复刻）。
+- `gateway.py` 新表 `job_units`（jid+idx 主键，状态 pending/running/done）：
+  调度层独立持有任务清单，不依赖引擎内存。派发 = 物化（INSERT OR IGNORE）→
+  盘上认领已完成单元（确定性文件存在 = 上次画完了）→ 提交下一个未完成单元；
+  对账 `engine_reconcile()` 单元级结算：done → 入账 + 推进；404（引擎重启丢 rid）
+  → 认领或重排该单元；error → 额度内原地局部重试，耗尽任务落 error（已完成单元
+  保留）。看门狗 `intervene()`、取消、重试全部单元化 —— `gw_retry` 只重跑未完成
+  单元（断点续跑式局部重试），载荷被重建过才全量重置。
+- 幂等四层：物化幂等（主键 + INSERT OR IGNORE）、调度幂等（派发前盘上认领）、
+  引擎幂等（unit_key 存在即跳过）、落盘原子（引擎 tmp+os.replace，
+  文件存在 ⇒ 完整成品）。
+- `ENGINE_URL` 环境变量仍为总开关，**不设=走 ComfyUI，行为零变化**（单体路径原样
+  保留作回滚）；回滚：`ENGINE_URL=""` 重启 gw，30 秒切回。
 
-切换生产：**已完成（2026-10-23 深夜）**——ENGINE_URL 默认值已翻转为引擎地址，
-gateway 重启即生效；同时 `_ana_fetch` 改为 gateway 直连 body_analyzer（分析不再
-经过 ComfyUI）。回滚：设环境变量 `ENGINE_URL=""`（走 ComfyUI 8189）重启 gw。
+**切换生产：已完成（2026-10-23 深夜，单体模式）**；单元调度落地于引擎 v0.4.0 +
+gateway 同步改造（2026-10-25），部署时网关重启即可，存量 held 任务在下次派发时
+自动惰性物化为单元，无需迁移。
 以下为原设计稿（部署顺序与风险对策仍然有效），备查。
 
 ## 契约翻译（dispatch 时刻，payload -> 引擎参数）

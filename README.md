@@ -45,10 +45,10 @@ set PY=E:\github\ComfyUI\python_embeded\python.exe
 
 | 端点 | 说明 |
 |---|---|
-| `GET /health` | `{ok, version, device, stats:{queue,running,total}, models, ...}` |
+| `GET /health` | `{ok, version, device, stats, models, ...}`；`stats` 见下方「任务状态机与队列治理」 |
 | `POST /render` | JSON：`{photo|ref, unit_key?, styles:[模板...], analysis?, quality?, seed1?, seed2?, width?, height?, steps?}` → `{rid}`；multipart：`photo_file`(二进制)+`job`(JSON) 供远端 worker 直传照片 |
-| `GET /result/{rid}` | `{status: queued\|running\|done\|error\|cancelled, stage, images:[{filename,subfolder,type}], seed1, seed2, expected, error}` |
-| `POST /cancel/{rid}` | 协作取消：排队中立即作废；运行中在段落边界生效（引擎存活） |
+| `GET /result/{rid}` | `{status: queued\|running\|done\|error\|cancelled, stage, images:[{filename,subfolder,type}], seed1, seed2, expected, error, cancel_requested}`；任务被 TTL/上限清扫后 404（未知任务） |
+| `POST /cancel/{rid}` | 取消：`{rid, status, cancel}`，未知任务 404。`cancel` 为取消语义：`queued-cancelled`（排队取消，worker 不会执行）/ `running-cancelled`（运行中请求，段落边界生效）/ `already-done`（终态，取消无效）；`status` 键与取值与旧版一致 |
 | `GET /view?filename=&type=output` | 取输出图（远端收图） |
 
 - `photo`（input 目录，整单/Step1 单元）与 `ref`（output 目录的 Step1 基础图，Step2
@@ -63,6 +63,49 @@ set PY=E:\github\ComfyUI\python_embeded\python.exe
   规则计数命名（`Step1_00001_.png`...）；
 - 一次任务的 seed1（Step1）/ seed2（Step2 全部造型共用）不传则随机（10^15 量级，与
   gateway 一致），结果里回传。生产路径由 gateway 在单元物化时刻冻结种子，重试可重现。
+
+## 任务状态机与队列治理（v0.4.1）
+
+单 worker 渲染队列的状态一致性、取消语义与内存上限（DEV-001）：
+
+- **状态机**：`queued → running → done|error|cancelled`，另含 `queued → cancelled`
+  （排队取消）与 `running → cancelled`（协作取消）。`status/started_ts/done_ts` 的
+  每一次变更都在单一 `threading.Lock` 内、经由唯一入口 `_set_status` 完成并校验
+  跃迁合法性（终态封死，非法跃迁直接 RuntimeError）。旧版 worker 绕锁直写，与
+  `cancel()` 的排队取消存在竞态——已取消任务可能被 worker 拉起执行，本版消除。
+- **取消三态**：`cancel(rid)` 返回 `{rid, status, cancel}`，`cancel ∈
+  {queued-cancelled, running-cancelled, already-done}`（未知/已清扫 rid → 404）。
+  排队取消立即作废，其队列条目在 worker 取到时被丢弃（丢弃量计入
+  `stats.residue_dropped`），**绝不渲染**；运行中取消仍是段落边界协作取消
+  （`/result` 里 `cancel_requested` 旗标可见）。
+- **队列指标分离**：`stats.queue` = 真实待执行数（从状态派生，不含取消残留——
+  旧版取 `_q.qsize()` 会把已取消条目计入，虚高）；`stats.running` = 活动任务数；
+  `stats.qsize` = 物理队列长度（含待丢弃残留，仅供诊断）。恒等式：
+  `queue + running + done + error + cancelled == total == len(_jobs)`。
+- **内存治理**：完成任务（done/error/cancelled）按 TTL + 条数上限清扫，
+  `config.json` 新增 `job_ttl`（默认 3600 秒，0 = 完成即清）与 `job_max_done`
+  （默认 500 条，超出删最旧）；submit / 每单完成 / `sweep()` 触发，queued/running
+  永不触碰。清理量计入 `stats.cleaned`（累计）与 `stats.last_sweep`（最近一次）。
+  被清扫任务的 `/result` 回落 404——gateway 对终态单元本就不依赖引擎账本
+  （断点续跑靠确定性文件名），TTL 默认 1 小时远大于轮询窗口。
+
+超时语义：引擎自身不设单任务超时（GPU 渲染时长跨度大），失败=error、
+取消=cancelled、卡死由上层 gateway 看门狗转取消/回炉。
+
+## 离线测试
+
+```bat
+cd E:\github\pic-engine
+:: 状态一致性 / 取消三态 / 内存清理（必须用内嵌解释器：依赖 torch）
+E:\github\ComfyUI\python_embeded\python.exe _test_runner_state.py
+:: 管线单元测试（同为内嵌解释器）
+E:\github\ComfyUI\python_embeded\python.exe _test_units.py
+```
+
+`_test_runner_state.py` 覆盖：100 并发提交无非法状态跃迁、排队取消不被执行、
+运行中取消生效且可查询、已完成/未知任务取消语义、失败路径引擎存活、
+2000 微任务后 `_jobs` 收敛到上限、TTL=0 完成即清、取消风暴与混合负载下
+统计恒等式全程成立。全部等待为有界条件轮询，无固定 sleep 时序依赖。
 
 ## 断点续跑（v0.4.0 起）
 

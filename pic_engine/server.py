@@ -117,10 +117,13 @@ def make_app(cfg, runner, device):
 
     async def cancel(request):
         rid = request.match_info["rid"]
-        st = runner.cancel(rid)
-        if st is None:
+        res = runner.cancel(rid)
+        if res["outcome"] == "not-found":
             return web.json_response({"error": "未知任务"}, status=404)
-        return web.json_response({"rid": rid, "status": st})
+        # 兼容：status 键与取值语义不变；cancel 键为新增的取消语义
+        # （queued-cancelled / running-cancelled / already-done）
+        return web.json_response({"rid": rid, "status": res["status"],
+                                  "cancel": res["outcome"]})
 
     async def view(request):
         fn = request.query.get("filename", "")

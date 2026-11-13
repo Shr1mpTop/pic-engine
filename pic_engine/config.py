@@ -39,6 +39,8 @@ DEFAULTS = {
     "cache": {"device": "auto", "dtype": "default"},   # QwenImage21Cache 参数
     "quality": DEFAULT_QUALITY,
     "low_ram": False,                # true = 顺序驻留（12GB 级机器专用，单阶段只驻留一个模型）
+    "job_ttl": 3600.0,               # 完成任务保留秒数（runner 定期清扫，0 = 完成即清）
+    "job_max_done": 500,             # 完成任务最大保留条数，超出删最旧（内存治理上限）
     "comfy_args": {},                # comfy 启动参数透传，例 {"use_split_cross_attention": true}
     "prompts": {"step1_template": "", "negative": ""},  # 由 extract 工具回填，勿手抄
     "default_analysis_file": os.path.join(ROOT, "defaults", "analysis_fallback.json"),

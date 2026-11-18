@@ -1,5 +1,7 @@
 # Pic Engine
 
+> 📍 本手册归属：《手册总目录》（E:\github\手册总目录.md，相对路径 ../手册总目录.md）｜ 总手册：《运维手册》（E:\github\运维手册.md）。**改动本手册后必须同步更新《手册总目录》对应条目。**
+
 穿搭工坊的**无服务器出图引擎**：把 ComfyUI fork 当库用（不起 server、无队列、无 JSON 图），
 把生产工作流固化为一条六段式模板管线，对上层暴露一个极简 HTTP 契约。
 渲染结果与 ComfyUI 跑同一工作流**逐位一致**——因为节点实现就是 fork 里的真类，直接调用。
@@ -46,6 +48,7 @@ set PY=E:\github\ComfyUI\python_embeded\python.exe
 | 端点 | 说明 |
 |---|---|
 | `GET /health` | `{ok, version, device, stats, models, ...}`；`stats` 见下方「任务状态机与队列治理」 |
+| `GET /capabilities` | `{engine, version, contract_version, capabilities:{render,cancel,units}}`；gateway 派发前协商用（`engine_contract.check_compatible`），契约主版本高于网关支持的会被拒绝提交 |
 | `POST /render` | JSON：`{photo|ref, unit_key?, styles:[模板...], analysis?, quality?, seed1?, seed2?, width?, height?, steps?}` → `{rid}`；multipart：`photo_file`(二进制)+`job`(JSON) 供远端 worker 直传照片 |
 | `GET /result/{rid}` | `{status: queued\|running\|done\|error\|cancelled, stage, images:[{filename,subfolder,type}], seed1, seed2, expected, error, cancel_requested}`；任务被 TTL/上限清扫后 404（未知任务） |
 | `POST /cancel/{rid}` | 取消：`{rid, status, cancel}`，未知任务 404。`cancel` 为取消语义：`queued-cancelled`（排队取消，worker 不会执行）/ `running-cancelled`（运行中请求，段落边界生效）/ `already-done`（终态，取消无效）；`status` 键与取值与旧版一致 |
@@ -126,6 +129,8 @@ u0 = Step1 基础图，u1..N = 逐造型，idx 序即依赖序）。引擎于是
 
 ## Mac 部署
 
+> **现况（2026-11-18）**：Mac（192.168.0.102）当前的角色是面板 `macollama` 卡所管的**手动 Ollama 节点**（:11434，全手动启停），**不是 pic-engine 的在线 worker**——生产出图只在笔记本 apex 的 `engine` 卡（:8195，手动开关）。以下是部署能力与内存门槛的备查记录，真要扩到 Mac 当出图节点再照做。
+
 ```bash
 git clone https://github.com/Shr1mpTop/pic-engine.git && cd pic-engine
 cp config.example.json config.json
@@ -161,3 +166,7 @@ PY=~/ComfyUI/venv/bin/python ./scripts/start_mac.sh   # 用跑 ComfyUI 的那个
 ## 安全边界
 
 无鉴权，**只许**绑 `127.0.0.1` / 内网 / Tailscale。严禁套 Cloudflare 公网隧道。
+
+---
+
+> ✅ 最后核验：2026-11-18（手册治理代理对照《运维手册》§0/§2/§13.125 当前真实状态逐项核验；统一索引见《手册总目录》）

@@ -1,5 +1,7 @@
 # 对齐依据：workflow.json → 引擎六段式
 
+> 📍 本手册归属：《手册总目录》（E:\github\手册总目录.md，相对路径 ../手册总目录.md）｜ 总手册：《运维手册》（E:\github\运维手册.md）。**改动本手册后必须同步更新《手册总目录》对应条目。**
+
 本文记录引擎与 `outfit_studio/web/workflow.json`（生产工作流）的逐节点映射与全部语义决策。
 改 workflow 后：先在 ComfyUI 画布上定稿，再跑 `scripts/extract_from_workflow.py` 校准配置。
 
@@ -76,3 +78,7 @@ python scripts/extract_from_workflow.py \
 - 校验：TextGenerate 上游 switch 必须 false，否则拒绝生成；
 - 溯源：workflow sha256 + 时间戳写进 `config._aligned`；
 - 幂等：只覆写 models/sampler/prompts 三节。
+
+---
+
+> ✅ 最后核验：2026-11-18（手册治理代理对照《运维手册》§0/§2/§13.125 当前真实状态逐项核验；统一索引见《手册总目录》）

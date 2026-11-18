@@ -53,6 +53,7 @@ gateway 的 jobs 表在派发前已具备全部信息，无需改 enqueue：
    - `poll(cfg, rid) -> snapshot`（GET /result/{rid}）
    - `ingest_done(jid, user_id, images)` —— 直接调 gateway 现有 `ingest_output_file`（引擎与 gateway 同机，输出落在同一 output/ 目录，按文件名入账即可）
 2. `gateway.py` dispatcher 加一个分支：`ENGINE_URL`（环境变量，默认空=走 ComfyUI）
+   ⚠️（上文"默认空=走 ComfyUI"为设计稿旧口径——**现状默认已反转**：不设 `ENGINE_URL` 也走 pic-engine，见本文头部 25-28 行注）
    - 派发：`rid = engine_bridge.submit(...)`，jobs 表 `pid` 存 rid
    - 对账：轮询 `/result/{rid}` 替代 `/queue + /history` 两套；
      `status=done` -> ingest 图片 + 置 done；`error` -> 现有错误路径
